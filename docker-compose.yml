@@ -1,0 +1,28 @@
+version: "3.9"
+
+# ══════════════════════════════════════════════════════════════════
+#  Wiki.js MCP Server
+#
+#  Deploy via Portainer → Stacks → Add Stack → Git Repository
+#  Set these environment variables in Portainer's "Environment variables"
+#  section before deploying:
+#
+#    WIKIJS_URL      → e.g. https://mywiki.aditnas.org
+#    WIKIJS_API_KEY  → your API key from Wiki.js Admin → API Access
+# ══════════════════════════════════════════════════════════════════
+
+services:
+  wikijs-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wikijs-mcp:latest
+    container_name: wikijs-mcp
+    restart: unless-stopped
+    ports:
+      - "3010:3001"
+    environment:
+      WIKIJS_URL:     ${WIKIJS_URL}
+      WIKIJS_API_KEY: ${WIKIJS_API_KEY}
+      MCP_PORT:       3001
+      MCP_HOST:       0.0.0.0

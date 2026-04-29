@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "wikijs": {
+      "url": "http://YOUR_SERVER_IP:3010/sse"
+    }
+  }
+}
