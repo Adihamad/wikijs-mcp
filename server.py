@@ -174,8 +174,8 @@ async def _get_page(args: dict) -> list[types.TextContent]:
             single(id: $id) {
                 id path title description content
                 updatedAt createdAt
+                authorId
                 tags { tag }
-                author { name }
             }
         }
     }
@@ -188,13 +188,12 @@ async def _get_page(args: dict) -> list[types.TextContent]:
     if not page:
         return [types.TextContent(type="text", text="Page not found. Double-check the ID.")]
 
-    tags   = ", ".join(t["tag"] for t in (page.get("tags") or []))
-    author = (page.get("author") or {}).get("name", "Unknown")
+    tags = ", ".join(t["tag"] for t in (page.get("tags") or []))
 
     header = (
         f"# {page['title']}\n"
         f"**ID:** {page['id']}  |  **Path:** /{page['path']}\n"
-        f"**Author:** {author}  |  **Updated:** {page.get('updatedAt', '—')}\n"
+        f"**Updated:** {page.get('updatedAt', '—')}\n"
     )
     if tags:
         header += f"**Tags:** {tags}\n"
@@ -203,6 +202,7 @@ async def _get_page(args: dict) -> list[types.TextContent]:
     header += "\n---\n\n"
 
     return [types.TextContent(type="text", text=header + (page.get("content") or "*(no content)*"))]
+
 
 
 async def _list_pages(args: dict) -> list[types.TextContent]:
