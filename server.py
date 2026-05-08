@@ -8,6 +8,8 @@ Tools:
   search_pages  — Search pages by keyword
   get_page      — Read full content of a page by ID
   list_pages    — List all pages in the wiki
+  create_page   — Create a new wiki page
+  update_page   — Update an existing wiki page
 """
 
 import asyncio
@@ -115,6 +117,92 @@ async def list_tools() -> list[types.Tool]:
                 },
             },
         ),
+        types.Tool(
+            name="create_page",
+            description=(
+                "Create a new page in Wiki.js. "
+                "Requires a title, path, and content. "
+                "Returns the new page's ID and path on success."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "The page title.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "URL path for the page (e.g. 'team/onboarding'). No leading slash.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Page body in Markdown.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Short description / subtitle shown in listings. Default: empty.",
+                        "default": "",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of tag strings to attach to the page. Default: [].",
+                        "default": [],
+                    },
+                    "locale": {
+                        "type": "string",
+                        "description": "Locale code (e.g. 'en'). Default: 'en'.",
+                        "default": "en",
+                    },
+                    "is_published": {
+                        "type": "boolean",
+                        "description": "Whether to publish the page immediately. Default: true.",
+                        "default": True,
+                    },
+                },
+                "required": ["title", "path", "content"],
+            },
+        ),
+        types.Tool(
+            name="update_page",
+            description=(
+                "Update an existing Wiki.js page by its numeric ID. "
+                "Only the fields you supply will change; omit fields you want to keep. "
+                "Use get_page or search_pages to find the page ID first."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "description": "The numeric ID of the page to update.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "New page title (leave out to keep existing).",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "New Markdown body (leave out to keep existing).",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "New description (leave out to keep existing).",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Replacement tag list (leave out to keep existing).",
+                    },
+                    "is_published": {
+                        "type": "boolean",
+                        "description": "Published state (leave out to keep existing).",
+                    },
+                },
+                "required": ["id"],
+            },
+        ),
     ]
 
 
@@ -129,6 +217,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             return await _get_page(arguments)
         elif name == "list_pages":
             return await _list_pages(arguments)
+        elif name == "create_page":
+            return await _create_page(arguments)
+        elif name == "update_page":
+            return await _update_page(arguments)
         else:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
     except httpx.HTTPStatusError as e:
@@ -232,6 +324,126 @@ async def _list_pages(args: dict) -> list[types.TextContent]:
         if p.get("description"):
             lines.append(f"  {p['description']}")
     return [types.TextContent(type="text", text="\n".join(lines))]
+
+
+async def _create_page(args: dict) -> list[types.TextContent]:
+    mutation = """
+    mutation CreatePage(
+        $title: String!, $path: String!, $content: String!,
+        $description: String!, $tags: [String]!, $locale: String!,
+        $isPublished: Boolean!, $isPrivate: Boolean!, $editor: String!
+    ) {
+        pages {
+            create(
+                title: $title, path: $path, content: $content,
+                description: $description, tags: $tags, locale: $locale,
+                isPublished: $isPublished, isPrivate: $isPrivate, editor: $editor
+            ) {
+                responseResult { succeeded errorCode message }
+                page { id path title }
+            }
+        }
+    }
+    """
+    variables = {
+        "title":       args["title"],
+        "path":        args["path"].lstrip("/"),
+        "content":     args["content"],
+        "description": args.get("description", ""),
+        "tags":        args.get("tags", []),
+        "locale":      args.get("locale", "en"),
+        "isPublished": args.get("is_published", True),
+        "isPrivate":   False,
+        "editor":      "markdown",
+    }
+    data = await gql(mutation, variables)
+    if "errors" in data:
+        return [types.TextContent(type="text", text=f"GraphQL error: {data['errors']}")]
+
+    result = data.get("data", {}).get("pages", {}).get("create", {})
+    resp   = result.get("responseResult", {})
+    if not resp.get("succeeded"):
+        return [types.TextContent(
+            type="text",
+            text=f"Failed to create page: {resp.get('message', 'Unknown error')} (code {resp.get('errorCode')})"
+        )]
+
+    page = result.get("page", {})
+    return [types.TextContent(
+        type="text",
+        text=f"✅ Page created successfully!\n**Title:** {page['title']}\n**ID:** {page['id']}\n**Path:** /{page['path']}"
+    )]
+
+
+async def _update_page(args: dict) -> list[types.TextContent]:
+    # Fetch existing page first so we only overwrite fields the caller supplied
+    fetch_query = """
+    query GetPage($id: Int!) {
+        pages {
+            single(id: $id) {
+                id path title description content locale isPublished isPrivate
+                tags { tag }
+            }
+        }
+    }
+    """
+    fetch_data = await gql(fetch_query, {"id": int(args["id"])})
+    if "errors" in fetch_data:
+        return [types.TextContent(type="text", text=f"GraphQL error fetching page: {fetch_data['errors']}")]
+
+    existing = fetch_data.get("data", {}).get("pages", {}).get("single")
+    if not existing:
+        return [types.TextContent(type="text", text=f"Page ID {args['id']} not found.")]
+
+    existing_tags = [t["tag"] for t in (existing.get("tags") or [])]
+
+    mutation = """
+    mutation UpdatePage(
+        $id: Int!, $title: String!, $path: String!, $content: String!,
+        $description: String!, $tags: [String]!, $locale: String!,
+        $isPublished: Boolean!, $isPrivate: Boolean!, $editor: String!
+    ) {
+        pages {
+            update(
+                id: $id, title: $title, path: $path, content: $content,
+                description: $description, tags: $tags, locale: $locale,
+                isPublished: $isPublished, isPrivate: $isPrivate, editor: $editor
+            ) {
+                responseResult { succeeded errorCode message }
+                page { id path title }
+            }
+        }
+    }
+    """
+    variables = {
+        "id":          int(args["id"]),
+        "title":       args.get("title",       existing["title"]),
+        "path":        existing["path"],          # path changes require a move; keep as-is
+        "content":     args.get("content",     existing["content"]),
+        "description": args.get("description", existing.get("description", "")),
+        "tags":        args.get("tags",        existing_tags),
+        "locale":      existing.get("locale",  "en"),
+        "isPublished": args.get("is_published", existing.get("isPublished", True)),
+        "isPrivate":   existing.get("isPrivate", False),
+        "editor":      "markdown",
+    }
+    data = await gql(mutation, variables)
+    if "errors" in data:
+        return [types.TextContent(type="text", text=f"GraphQL error: {data['errors']}")]
+
+    result = data.get("data", {}).get("pages", {}).get("update", {})
+    resp   = result.get("responseResult", {})
+    if not resp.get("succeeded"):
+        return [types.TextContent(
+            type="text",
+            text=f"Failed to update page: {resp.get('message', 'Unknown error')} (code {resp.get('errorCode')})"
+        )]
+
+    page = result.get("page", {})
+    return [types.TextContent(
+        type="text",
+        text=f"✅ Page updated successfully!\n**Title:** {page['title']}\n**ID:** {page['id']}\n**Path:** /{page['path']}"
+    )]
 
 
 # ─── SSE Server setup ──────────────────────────────────────────────────────────
